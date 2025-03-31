@@ -5,6 +5,7 @@ import asyncio
 import subprocess
 from pathlib import Path
 from fastapi import HTTPException, FastAPI, Request, Query
+from fastapi.responses import FileResponse
 from config import SHARED_VENV_DIR
 
 SHARED_VENV_PATH = Path(SHARED_VENV_DIR).resolve()
@@ -49,17 +50,15 @@ async def ensure_shared_venv():
             raise HTTPException(status_code=500, detail=f"pip still not found after setup at {pip_path}")
 
 async def install_requirements(plugin_path: str):
-    """Install requirements.txt into shared virtual environment synchronously for reliability."""
+    """Install requirements.txt into shared virtual environment synchronously."""
     requirements_file = Path(plugin_path) / "requirements.txt"
     if requirements_file.exists():
         await ensure_shared_venv()
         pip_path = SHARED_VENV_PATH / ("bin" if os.name != "nt" else "Scripts") / "pip"
         
-        # Debugging: Print paths and check existence
         print(f"pip_path: {pip_path}, exists: {pip_path.exists()}")
         print(f"requirements_file: {requirements_file}, exists: {requirements_file.exists()}")
 
-        # Synchronous call for reliability
         try:
             result = subprocess.run(
                 [str(pip_path), "install", "-r", str(requirements_file)],
@@ -75,7 +74,7 @@ async def install_requirements(plugin_path: str):
             )
 
 async def setup_dynamic_route(app: FastAPI, route_name: str, plugin_path: str, repo_name: str):
-    """Set up dynamic route from plugin's main.py for GET and POST."""
+    """Set up dynamic route from plugin's main.py for GET and POST with async support."""
     main_file = Path(plugin_path) / "main.py"
     if not main_file.exists():
         raise HTTPException(status_code=400, detail="No 'main.py' found in repo")
@@ -84,7 +83,7 @@ async def setup_dynamic_route(app: FastAPI, route_name: str, plugin_path: str, r
 
     python_path = SHARED_VENV_PATH / ("bin" if os.name != "nt" else "Scripts") / "python"
     if not python_path.exists():
-        python_path = sys.executable  # Fallback to system Python
+        python_path = sys.executable
 
     spec = importlib.util.spec_from_file_location(repo_name, str(main_file))
     module = importlib.util.module_from_spec(spec)
@@ -94,12 +93,26 @@ async def setup_dynamic_route(app: FastAPI, route_name: str, plugin_path: str, r
     if not hasattr(module, "handler"):
         raise HTTPException(status_code=400, detail="No 'handler' function in main.py")
 
+    is_async_handler = asyncio.iscoroutinefunction(module.handler)
+
     @app.get(f"/{route_name}")
     async def get_route(query: str = Query(None)):
-        data = {"query": query} if query else {}
-        return module.handler(method="GET", data=data)
+        data = {"text": query} if query else {}
+        if is_async_handler:
+            response = await module.handler(method="GET", data=data)
+        else:
+            response = module.handler(method="GET", data=data)
+        if isinstance(response, FileResponse):
+            return response
+        return response
 
     @app.post(f"/{route_name}")
     async def post_route(request: Request):
         data = await request.json()
-        return module.handler(method="POST", data=data)
+        if is_async_handler:
+            response = await module.handler(method="POST", data=data)
+        else:
+            response = module.handler(method="POST", data=data)
+        if isinstance(response, FileResponse):
+            return response
+        return response
