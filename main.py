@@ -8,6 +8,7 @@ import os
 import shutil
 from config import PLUGINS_DIR
 import uvicorn
+import asyncio
 
 app = FastAPI()
 
@@ -21,8 +22,7 @@ class PluginRequest(BaseModel):
 class UninstallRequest(BaseModel):
     repo_name: str
 
-@app.post("/install_plugin")
-async def install_plugin(plugin: PluginRequest):
+async def install_plugin_logic(plugin: PluginRequest):
     route_name = plugin.route_name.strip("/")
     repo_url = plugin.github_repo_url
     repo_name = repo_url.split("/")[-1].replace(".git", "")
@@ -31,8 +31,11 @@ async def install_plugin(plugin: PluginRequest):
 
     plugins_memory = load_plugins_memory()
 
-    if repo_name in plugins_memory:
-        return {"message": f"Plugin '{repo_name}' already installed at /{plugins_memory[repo_name]['route']}"}
+    # Agar plugin pehle se installed hai, to sirf route setup karo
+    if repo_name in plugins_memory and os.path.exists(plugin_path):
+        print(f"Plugin '{repo_name}' already exists, setting up route only.")
+        await setup_dynamic_route(app, route_name, plugin_path, repo_name)
+        return {"message": f"Plugin '{repo_name}' route re-established at /{route_name}"}
 
     try:
         await download_github_zip(repo_url, zip_path)
@@ -54,6 +57,10 @@ async def install_plugin(plugin: PluginRequest):
         if os.path.exists(plugin_path):
             shutil.rmtree(plugin_path)
         raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+@app.post("/install_plugin")
+async def install_plugin(plugin: PluginRequest):
+    return await install_plugin_logic(plugin)
 
 @app.post("/uninstall_plugin")
 async def uninstall_plugin(request: UninstallRequest):
@@ -87,6 +94,24 @@ async def plugin_status(repo_name: str):
 @app.get("/")
 async def root():
     return {"message": "FastAPI Plugin Loader"}
+
+# Startup event to reload routes for existing plugins
+@app.on_event("startup")
+async def startup_event():
+    plugins_memory = load_plugins_memory()
+    for repo_name, plugin_data in plugins_memory.items():
+        if plugin_data.get("status") == "installed":
+            plugin_path = os.path.join(PLUGINS_DIR, repo_name)
+            if os.path.exists(plugin_path):
+                print(f"Reloading route for existing plugin: {repo_name}")
+                await setup_dynamic_route(app, plugin_data["route"], plugin_path, repo_name)
+            else:
+                print(f"Re-installing plugin: {repo_name}")
+                plugin_request = PluginRequest(
+                    route_name=plugin_data["route"],
+                    github_repo_url=plugin_data["github_url"]
+                )
+                await install_plugin_logic(plugin_request)
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
