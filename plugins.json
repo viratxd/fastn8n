@@ -1,1 +1,14 @@
-
+{
+    "fastapi-plugin-chat": {
+        "route": "myplugin",
+        "github_url": "https://github.com/viratxd/fastapi-plugin-chat",
+        "installed_at": "1743422879.4532127",
+        "status": "installed"
+    },
+    "fastapi-plugin-tts": {
+        "route": "edgetts",
+        "github_url": "https://github.com/viratxd/fastapi-plugin-tts",
+        "installed_at": "1743425383.5671158",
+        "status": "installed"
+    }
+}
