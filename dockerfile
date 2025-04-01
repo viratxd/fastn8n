@@ -1,31 +1,30 @@
-# Base image: Python 3.8
-FROM python:3.8-slim
+FROM python:3.10
 
-# Working directory set karo
+# Install git and ffmpeg as root
+RUN apt-get update && apt-get install -y git ffmpeg
+
+# Create a non-root user
+RUN useradd -m -u 1000 user
+ENV HOME=/home/user
+USER user
 WORKDIR /app
 
-# System dependencies install karo (ffmpeg optional hai agar video cutter chahiye)
-RUN apt-get update && apt-get install -y \
-    ffmpeg \
-    && rm -rf /var/lib/apt/lists/*
+# Receive Git URL from build argument
+ARG GIT_REP
+RUN echo "Cloning repository: ${GIT_REP}" && \
+    git clone https://github.com/viratxd/fastn8n.git /app/fastn8n
 
-# Project files copy karo
-COPY . /app
+WORKDIR /app/fastn8n
 
-# Virtual environment banao aur activate karo
-RUN python -m venv /app/shared_venv
+# Set up virtual environment and dependencies
+RUN python -m venv shared_venv && \
+    shared_venv/bin/pip install --upgrade pip && \
+    shared_venv/bin/pip install --no-cache-dir -r requirements.txt && \
+    shared_venv/bin/pip install --no-cache-dir numpy opencv-python-headless  && \
+    shared_venv/bin/python -m pip list > /app/pip_list.txt
 
-# Virtual environment ke pip ko upgrade karo
-RUN /app/shared_venv/bin/pip install --upgrade pip
+# Ensure permissions
+RUN chown -R user:user /app
 
-# Project dependencies virtual environment mein install karo
-RUN /app/shared_venv/bin/pip install --no-cache-dir -r requirements.txt
-
-# Virtual environment ka Python default path mein add karo
-ENV PATH="/app/shared_venv/bin:$PATH"
-
-# Port expose karo
-EXPOSE 8000
-
-# Command to run the application using virtual environment ka Python
-CMD ["python", "main.py"]
+EXPOSE 7860
+CMD ["shared_venv/bin/python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "7860"]
